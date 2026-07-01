@@ -15,13 +15,16 @@ Three swipeable tabs plus a first-run device picker. All values fall back to
 `---` when a stream goes stale, and each graph pans through recorded history
 with 1m / 10m / 1h window presets and a Live button.
 
+
+<img src="docs/screenshots/nav.png" alt="Nav Data" height="300"><img src="docs/screenshots/engine.png" alt="Engine" height="300"><img src="docs/screenshots/battery.png" alt="BMS" height="300"><img src="docs/screenshots/device-picker.png" alt="Settings" height="300">
+
+
 ### Navigation
 
 Position, STW, live Polar %, apparent wind (AWS / AWA), and SOG / COG. The
 graph plots STW, Polar %, and depth over time on three independent Y axes
 (STW knots and Polar % on the left, depth metres on the right).
 
-![Navigation screen](docs/screenshots/nav.png)
 
 ### Engine
 
@@ -30,7 +33,6 @@ current, with a fault-alarm banner. The graph plots RPM (left axis) plus
 coolant / exhaust / alternator temperature (right °C axis); fuel % and engine
 hours sit beside the window controls.
 
-![Engine screen](docs/screenshots/engine.png)
 
 ### Battery
 
@@ -38,7 +40,6 @@ Pack voltage, current, state of charge, cell balance (max−min spread), and
 remaining / full capacity, with charge / discharge FET status chips. The
 graph plots pack voltage (left axis) against pack current (right axis).
 
-![Battery screen](docs/screenshots/battery.png)
 
 ### Connect / change device
 
@@ -47,7 +48,6 @@ BLE device and tap to connect. The PIN unlocks the battery and engine data
 (the "BoatWatch" auth handshake). The chosen device and PIN are remembered,
 so subsequent launches auto-connect with no scan.
 
-![Device picker](docs/screenshots/device-picker.png)
 
 ## How it works
 
