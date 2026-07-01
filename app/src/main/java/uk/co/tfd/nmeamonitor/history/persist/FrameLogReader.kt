@@ -136,6 +136,11 @@ class FrameLogReader private constructor(
         private val MAGIC = "navdata".toByteArray(Charsets.US_ASCII)
         const val HEADER_SIZE = 14
 
+        // Sanity cap on the body ByteArray we allocate. A full day of the
+        // widest stream (48 B BMS at 1 s/slot) is ~4 MB; 16 MB gives head-
+        // room for future streams while refusing pathological files.
+        private const val MAX_BODY_BYTES = 16L * 1024 * 1024
+
         /**
          * Open a history file for reading. Returns null if the file is
          * missing, too short to contain a header, has the wrong magic,
@@ -182,6 +187,14 @@ class FrameLogReader private constructor(
                 if (expectedSecondsPerRecord != null && spr != expectedSecondsPerRecord) return null
 
                 val bodyLen = (file.length() - HEADER_SIZE).coerceAtLeast(0L)
+                // A per-day file for any stream is under ~3 MB. Anything
+                // above the cap is corrupt or hostile; refuse rather than
+                // let ByteArray(bodyLen.toInt()) OOM or wrap to a negative
+                // size on files > 2 GiB.
+                if (bodyLen > MAX_BODY_BYTES) {
+                    Log.w(TAG, "${file.name}: body $bodyLen exceeds cap $MAX_BODY_BYTES")
+                    return null
+                }
                 val truncated = bodyLen - (bodyLen % recordSize)
                 val body = ByteArray(truncated.toInt())
                 raf.readFully(body)
