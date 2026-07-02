@@ -15,6 +15,7 @@ import uk.co.tfd.nmeamonitor.nmea.BmsProtocol
 import uk.co.tfd.nmeamonitor.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
@@ -60,6 +61,8 @@ class MonitorService : Service() {
     )
 
     private var source: BleNmeaSource? = null
+    private var sourcePin: String = ""
+    private val sourceJobs = mutableListOf<Job>()
     private var wakeLock: PowerManager.WakeLock? = null
 
     inner class LocalBinder : Binder() {
@@ -71,12 +74,6 @@ class MonitorService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Guard against duplicate starts (rebind, or START_STICKY relaunch
-        // arriving while we're already connected).
-        if (_state.value.running) {
-            return START_STICKY
-        }
-
         // On a START_STICKY relaunch the OS passes a null intent, so fall
         // back to the persisted device/pin.
         val address = intent?.getStringExtra(EXTRA_ADDRESS) ?: MonitorPrefs.address(this)
@@ -87,24 +84,41 @@ class MonitorService : Service() {
             return START_NOT_STICKY
         }
 
-        startForeground(NmeaMonitorApp.NOTIFICATION_ID, buildNotification())
-        acquireWakeLock()
+        // Already running against this device with the same pin — nothing to do.
+        // Covers duplicate starts from rebinds and START_STICKY relaunches.
+        if (_state.value.running &&
+            _state.value.deviceAddress == address &&
+            sourcePin == pin
+        ) {
+            return START_STICKY
+        }
+
+        // First start, or the user picked a different device / changed the pin.
+        // Tear down the old BLE source before wiring up the new one so we
+        // don't end up with two GATT connections fighting each other.
+        stopSource()
+
+        if (!_state.value.running) {
+            startForeground(NmeaMonitorApp.NOTIFICATION_ID, buildNotification())
+            acquireWakeLock()
+        }
 
         val ble = BleNmeaSource(this, address, pin) { connected, status ->
             _state.update { it.copy(connected = connected, status = status) }
         }
         source = ble
+        sourcePin = pin
 
         // Mirror decoded state into the combined MonitorState. Forward nulls
         // too — the source emits null when a stream goes stale, and the UI
         // relies on that to fall back to "---".
-        serviceScope.launch {
+        sourceJobs += serviceScope.launch {
             ble.navigationState.collect { nav -> _state.update { it.copy(navigationState = nav) } }
         }
-        serviceScope.launch {
+        sourceJobs += serviceScope.launch {
             ble.engineState.collect { engine -> _state.update { it.copy(engineState = engine) } }
         }
-        serviceScope.launch {
+        sourceJobs += serviceScope.launch {
             ble.batteryState.collect { battery -> _state.update { it.copy(batteryState = battery) } }
         }
 
@@ -112,19 +126,19 @@ class MonitorService : Service() {
         // canonicalised BMS slots for the battery graph. FrameLog auto-pads
         // sentinels for skipped seconds, so no ticker is needed here.
         val log = ensureLogger()
-        serviceScope.launch {
+        sourceJobs += serviceScope.launch {
             ble.rawNavFrames.collect { frame -> log.nav.append(frame) }
         }
-        serviceScope.launch {
+        sourceJobs += serviceScope.launch {
             ble.rawEngineFrames.collect { frame -> log.engine.append(frame) }
         }
-        serviceScope.launch {
+        sourceJobs += serviceScope.launch {
             ble.rawBatteryFrames.collect { frame ->
                 BmsProtocol.encodeHistorySlot(frame)?.let { log.bms.append(it) }
             }
         }
 
-        serviceScope.launch {
+        sourceJobs += serviceScope.launch {
             try {
                 ble.start(throwawaySink)
             } catch (e: Exception) {
@@ -133,15 +147,36 @@ class MonitorService : Service() {
         }
 
         _state.update {
-            it.copy(running = true, deviceAddress = address)
+            it.copy(
+                running = true,
+                deviceAddress = address,
+                connected = false,
+                status = null,
+                navigationState = null,
+                batteryState = null,
+                engineState = null,
+            )
         }
 
         return START_STICKY
     }
 
-    override fun onDestroy() {
+    /**
+     * Stop the current BLE source (if any) and cancel the collectors that
+     * were mirroring its flows into [_state]. Leaves the foreground/wake
+     * lock/history logger intact so a follow-up start can swap in a new
+     * source without a service teardown.
+     */
+    private fun stopSource() {
         source?.stop()
         source = null
+        sourcePin = ""
+        sourceJobs.forEach { it.cancel() }
+        sourceJobs.clear()
+    }
+
+    override fun onDestroy() {
+        stopSource()
         serviceScope.cancel()
         // Close history files after cancelling collectors so the final
         // record is flushed durably.
