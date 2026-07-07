@@ -35,6 +35,7 @@ class MonitorViewModel : ViewModel() {
 
     companion object {
         private val NAV_SERVICE_PARCEL = ParcelUuid(BleNmeaSource.NMEA_SERVICE_UUID)
+        private val BW_SERVICE_PARCEL  = ParcelUuid(BleNmeaSource.BW_SERVICE_UUID)
         private const val SCAN_DURATION_MS = 8_000L
 
         const val DEFAULT_CHART_WINDOW_MS = 10L * 60 * 1000   // 10 min
@@ -86,11 +87,16 @@ class MonitorViewModel : ViewModel() {
             if (address in seenBleAddresses) return
 
             val deviceName = try { result.device.name } catch (_: Exception) { null }
-            val advertisesNavService =
-                result.scanRecord?.serviceUuids?.contains(NAV_SERVICE_PARCEL) == true
+            // Firmware advertises the BoatWatch service (AA00); the Nav service (FF00)
+            // is present after connect but not in the advertisement, so we accept
+            // either UUID (defensive, in case the firmware advertises FF00 later).
+            val advertisedUuids = result.scanRecord?.serviceUuids
+            val advertisesBridge =
+                advertisedUuids?.contains(BW_SERVICE_PARCEL) == true ||
+                advertisedUuids?.contains(NAV_SERVICE_PARCEL) == true
 
-            // Only show devices that advertise the Nav Data service or have a name
-            if (!advertisesNavService && deviceName == null) return
+            // Only show devices that advertise our service or have a name
+            if (!advertisesBridge && deviceName == null) return
 
             seenBleAddresses.add(address)
             val name = deviceName ?: "BLE Nav"
